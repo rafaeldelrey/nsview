@@ -2,6 +2,7 @@ import os
 import re
 import pandas as pd
 from datetime import datetime, timedelta
+import pytz
 
 import streamlit as st
 import extra_streamlit_components as stx
@@ -53,7 +54,7 @@ def get_reason_item(reason, item_name):
     return None
 
 
-def get_ns_data(ns_url, ns_token, min_date, max_date):
+def get_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
     data_dir = "./temp"
     os.makedirs(data_dir, exist_ok=True)
     fp_status, meta_status = ns_data_file("devicestatus", data_dir, ns_url, ns_token, max_date, min_date)
@@ -62,7 +63,10 @@ def get_ns_data(ns_url, ns_token, min_date, max_date):
     df = pd.read_json(fp_status)
     if len(df) == 0:
         return None
-    df["date"] = df["created_at"].dt.tz_convert("EST")
+    if time_zone == "Dont convert":
+        df["date"] = df["created_at"]
+    else:
+        df["date"] = df["created_at"].dt.tz_convert(tz=time_zone)
     df["reason"] = df["openaps"].apply(get_suggested, item_name="reason")
     df["bg"] = df["openaps"].apply(get_suggested, item_name="bg")
     df = df.sort_values("created_at", ascending=False)
@@ -74,8 +78,8 @@ def get_ns_data(ns_url, ns_token, min_date, max_date):
 
 
 @st.experimental_memo(show_spinner=False)
-def get_cached_ns_data(ns_url, ns_token, min_date, max_date):
-    return get_ns_data(ns_url, ns_token, min_date, max_date)
+def get_cached_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
+    return get_ns_data(ns_url, ns_token, min_date, max_date, time_zone)
 
 
 def show_data(df):
@@ -84,6 +88,7 @@ def show_data(df):
     gb.configure_side_bar()
     grid_options = gb.build()
     AgGrid(df, gridOptions=grid_options, enable_enterprise_modules=True)
+    print(df[["created_at", "date"]].head())
 
 
 def show_graph(df, col_name1, col_name2):
@@ -132,6 +137,9 @@ def main():
 
             min_date, max_date = st.date_input("Date Range:", value=[min_date, max_date])
 
+            tzs = ["Dont convert"] + [str(tz) for tz in pytz.common_timezones]
+            time_zone = st.selectbox("Convert to Timezone:", options=tzs)
+
             submit_button = st.form_submit_button("Submit")
         st.write("\n__Author:__ [Rafael Del Rey](https://www.linkedin.com/in/rafaeldelrey)")
 
@@ -149,9 +157,9 @@ def main():
             max_date = str(max_date)
             if submit_button:
                 # Dont use cache, if clicked on the button
-                df = get_ns_data(ns_url, ns_token, min_date, max_date)
+                df = get_ns_data(ns_url, ns_token, min_date, max_date, time_zone)
             else:
-                df = get_cached_ns_data(ns_url, ns_token, min_date, max_date)
+                df = get_cached_ns_data(ns_url, ns_token, min_date, max_date, time_zone)
 
         if (df is None) or (len(df) == 0):
             st.warning("No data loaded!")
