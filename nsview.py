@@ -20,12 +20,12 @@ COOKIE_NS_URL = "ns_url"
 COOKIE_NS_TOKEN = "ns_token"
 
 
-@st.cache(allow_output_mutation=True)
+@st.experimental_memo(show_spinner=False)
 def get_manager():
     return stx.CookieManager()
 
 
-title = "Nightccout Android APS Data Viewer (AIMI Version)"
+title = "Nightscout Android APS Data Viewer"
 st.set_page_config(layout="wide", page_title=title)
 cookie_manager = get_manager()
 
@@ -73,13 +73,12 @@ def get_ns_data(ns_url, ns_token, min_date, max_date):
     return df
 
 
-@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def get_cached_ns_data(ns_url, ns_token, min_date, max_date):
     return get_ns_data(ns_url, ns_token, min_date, max_date)
 
 
 def show_data(df):
-    st.subheader("Data:")
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_pagination()
     gb.configure_side_bar()
@@ -115,7 +114,7 @@ def show_graph(df, col_name1, col_name2):
 
 def main():
     with st.sidebar:
-        st.title(title)
+        st.subheader(title)
         with st.form("nsview_options"):
             ns_url_cookie = cookie_manager.get(cookie=COOKIE_NS_URL)
             ns_url_cookie = ns_url_cookie if ns_url_cookie else ""
@@ -123,6 +122,8 @@ def main():
             ns_url_token = ns_url_token if ns_url_token else ""
 
             ns_url = st.text_input("NightScout URL:", ns_url_cookie)
+            if ns_url.endswith("/"):
+                ns_url = ns_url[:-1]
             ns_token = st.text_input("NightScout Read Token:", ns_url_token)
 
             # Default start date is yesterday
@@ -130,13 +131,21 @@ def main():
             max_date = datetime.now() + timedelta(days=1)
 
             min_date, max_date = st.date_input("Date Range:", value=[min_date, max_date])
-            min_date = str(min_date)
-            max_date = str(max_date)
 
             submit_button = st.form_submit_button("Submit")
+
     if submit_button or st.session_state.get("button_submit", False):
         st.session_state["button_submit"] = True
+        if ns_url == "":
+            st.warning("Invalid Nightscout URL")
+            return
         with st.spinner("Fetching data from Nightscout..."):
+            # Lets add a day on max_date, so it is included on the fetch
+            max_date += timedelta(days=1)
+
+            # Convert dates to string
+            min_date = str(min_date)
+            max_date = str(max_date)
             if submit_button:
                 # Dont use cache, if clicked on the button
                 df = get_ns_data(ns_url, ns_token, min_date, max_date)
@@ -151,16 +160,17 @@ def main():
         cookie_manager.set(COOKIE_NS_URL, ns_url, key=COOKIE_NS_URL + "_set")
         cookie_manager.set(COOKIE_NS_TOKEN, ns_token, key=COOKIE_NS_TOKEN + "_set")
 
+        # Show graph
+        st.subheader(title)
         # Graph options
-        st.subheader("Graphs:")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, _, _ = st.columns(4)
         col_name1 = col1.selectbox("Graph Column 1:", COLS_GRAPH, index=0)
         col_name2 = col2.selectbox("Graph Column 2:", COLS_GRAPH, index=1)
 
-        # Show graph
         show_graph(df, col_name1, col_name2)
 
         # Show data
+        st.subheader("Data:")
         show_data(df)
 
 
