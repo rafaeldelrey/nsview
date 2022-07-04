@@ -128,7 +128,7 @@ def main():
 
             # Default start date is yesterday
             min_date = datetime.now() + timedelta(days=-1)
-            max_date = datetime.now() + timedelta(days=1)
+            max_date = datetime.now()
 
             min_date, max_date = st.date_input("Date Range:", value=[min_date, max_date])
 
