@@ -133,6 +133,7 @@ def main():
             min_date, max_date = st.date_input("Date Range:", value=[min_date, max_date])
 
             submit_button = st.form_submit_button("Submit")
+        st.write("\n__Author:__ [Rafael Del Rey](https://www.linkedin.com/in/rafaeldelrey)")
 
     if submit_button or st.session_state.get("button_submit", False):
         st.session_state["button_submit"] = True
