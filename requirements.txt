@@ -1,0 +1,7 @@
+pandas
+streamlit
+streamlit-aggrid
+extra_streamlit_components
+requests
+arrow
+plotly
