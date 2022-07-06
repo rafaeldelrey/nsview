@@ -14,14 +14,45 @@ from plotly.subplots import make_subplots
 from nsdata import ns_data_file
 
 
-COLS_REASON_NUM = ["isf", "target", "tdd", "circadian_sensitivity"]
-COLS_GRAPH = ["bg"] + COLS_REASON_NUM
+COLS_SUGGESTED_NUM = [
+    "BG",
+    "COB",
+    "IOB",
+    "eventualBG",
+    "targetBG",
+    "insulinReq",
+    "sensitivityRatio",
+    "variable_sens",
+]
+
+COLS_REASON_NUM = ["ISF",
+                   "CR",
+                   "Target",
+                   "tdd",
+                   "circadian_sensitivity",
+                   "Dev",
+                   "BGI",
+                   "aimi_bg",
+                   "aimi_delta",
+                   "DiaSMB",
+                   "DiaManualBolus",
+                   "MagicNumber",
+                   "smbRatio",
+                   "limitIOB",
+                   "bgDegree"
+                   ]
+
+COLS_GRAPH = COLS_REASON_NUM + COLS_SUGGESTED_NUM
 
 COOKIE_NS_URL = "ns_url"
 COOKIE_NS_TOKEN = "ns_token"
+COOKIE_TIMEZONE = "timezone"
 
 
-@st.experimental_memo(show_spinner=False)
+TZ_DONT_CONVERT = "Dont convert"
+
+
+# @st.experimental_memo(show_spinner=False)
 def get_manager():
     return stx.CookieManager()
 
@@ -39,16 +70,19 @@ def get_openaps(openaps, item_name):
 
 
 def get_suggested(openaps, item_name):
+    ret = None
     sug = get_openaps(openaps, "suggested")
     if sug:
-        return sug.get(item_name, None)
-    return None
+        ret = sug.get(item_name, None)
+        if ret is None:
+            ret = sug.get(item_name.lower(), None)
+    return ret
 
 
 def get_reason_item(reason, item_name):
     if reason is None:
         return None
-    rs = re.findall(f"{item_name}[\s]{{0,1}}: ([\d.\s]*),", reason, flags=re.I)
+    rs = re.findall(f"{item_name}[\s]{{0,1}}: ([\d.\s-]*),", reason, flags=re.I)
     if len(rs) > 0:
         return rs[0]
     return None
@@ -63,13 +97,17 @@ def get_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
     df = pd.read_json(fp_status)
     if len(df) == 0:
         return None
-    if time_zone == "Dont convert":
+    if time_zone == TZ_DONT_CONVERT:
         df["date"] = df["created_at"]
     else:
         df["date"] = df["created_at"].dt.tz_convert(tz=time_zone)
     df["reason"] = df["openaps"].apply(get_suggested, item_name="reason")
-    df["bg"] = df["openaps"].apply(get_suggested, item_name="bg")
+    # df["BG"] = df["openaps"].apply(get_suggested, item_name="BG")
     df = df.sort_values("created_at", ascending=False)
+
+    for col in COLS_SUGGESTED_NUM:
+        df[col] = df["openaps"].apply(get_suggested, item_name=col)
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     for col in COLS_REASON_NUM:
         df[col] = df["reason"].apply(get_reason_item, item_name=col)
@@ -118,18 +156,22 @@ def show_graph(df, col_name1, col_name2):
 
 
 def main():
+    ns_url_cookie = cookie_manager.get(cookie=COOKIE_NS_URL)
+    ns_url_cookie = ns_url_cookie if ns_url_cookie else ""
+    ns_token_cookie = cookie_manager.get(cookie=COOKIE_NS_TOKEN)
+    ns_token_cookie = ns_token_cookie if ns_token_cookie else ""
+    timezone_cookie = cookie_manager.get(cookie=COOKIE_TIMEZONE)
+    timezone_cookie = timezone_cookie if timezone_cookie else TZ_DONT_CONVERT
+
     with st.sidebar:
         st.subheader(title)
         with st.form("nsview_options"):
-            ns_url_cookie = cookie_manager.get(cookie=COOKIE_NS_URL)
-            ns_url_cookie = ns_url_cookie if ns_url_cookie else ""
-            ns_url_token = cookie_manager.get(cookie=COOKIE_NS_TOKEN)
-            ns_url_token = ns_url_token if ns_url_token else ""
-
             ns_url = st.text_input("NightScout URL:", ns_url_cookie)
             if ns_url.endswith("/"):
                 ns_url = ns_url[:-1]
-            ns_token = st.text_input("NightScout Read Token:", ns_url_token)
+            if not ns_url.lower().startswith("https://"):
+                ns_url = "https://" + ns_url
+            ns_token = st.text_input("NightScout Read Token:", ns_token_cookie)
 
             # Default start date is yesterday
             min_date = datetime.now() + timedelta(days=-1)
@@ -137,8 +179,19 @@ def main():
 
             min_date, max_date = st.date_input("Date Range:", value=[min_date, max_date])
 
-            tzs = ["Dont convert"] + [str(tz) for tz in pytz.common_timezones]
-            time_zone = st.selectbox("Convert to Timezone:", options=tzs)
+            tzs = [TZ_DONT_CONVERT] + [str(tz) for tz in pytz.common_timezones]
+            try:
+                tz_cookie_index = tzs.index(timezone_cookie)
+            except ValueError:
+                tz_cookie_index = 0
+            timezone_name = st.selectbox("Convert to Timezone:", options=tzs, index=tz_cookie_index)
+
+            if timezone_name != TZ_DONT_CONVERT:
+                tz = pytz.timezone(timezone_name)
+            else:
+                tz = pytz.timezone("UTC")
+            max_date = tz.localize(datetime(max_date.year, max_date.month, max_date.day))
+            min_date = tz.localize(datetime(min_date.year, min_date.month, min_date.day))
 
             submit_button = st.form_submit_button("Submit")
         st.write("\n__Author:__ [Rafael Del Rey](https://www.linkedin.com/in/rafaeldelrey)")
@@ -152,14 +205,16 @@ def main():
             # Lets add a day on max_date, so it is included on the fetch
             max_date += timedelta(days=1)
 
-            # Convert dates to string
-            min_date = str(min_date)
-            max_date = str(max_date)
+            # Convert dates to string in UTC
+            min_date = min_date.replace(tzinfo=pytz.utc)
+            max_date = max_date.replace(tzinfo=pytz.utc)
+            st.write(max_date)
+
             if submit_button:
                 # Dont use cache, if clicked on the button
-                df = get_ns_data(ns_url, ns_token, min_date, max_date, time_zone)
+                df = get_ns_data(ns_url, ns_token, str(min_date), str(max_date), timezone_name)
             else:
-                df = get_cached_ns_data(ns_url, ns_token, min_date, max_date, time_zone)
+                df = get_cached_ns_data(ns_url, ns_token, str(min_date), str(max_date), timezone_name)
 
         if (df is None) or (len(df) == 0):
             st.warning("No data loaded!")
@@ -168,13 +223,14 @@ def main():
         # Store cookies
         cookie_manager.set(COOKIE_NS_URL, ns_url, key=COOKIE_NS_URL + "_set")
         cookie_manager.set(COOKIE_NS_TOKEN, ns_token, key=COOKIE_NS_TOKEN + "_set")
+        cookie_manager.set(COOKIE_TIMEZONE, timezone_name, key=COOKIE_TIMEZONE + "_set")
 
         # Show graph
         st.subheader(title)
         # Graph options
         col1, col2, _, _ = st.columns(4)
-        col_name1 = col1.selectbox("Graph Column 1:", COLS_GRAPH, index=0)
-        col_name2 = col2.selectbox("Graph Column 2:", COLS_GRAPH, index=1)
+        col_name1 = col1.selectbox("Graph Column 1:", COLS_GRAPH, index=COLS_GRAPH.index("ISF"))
+        col_name2 = col2.selectbox("Graph Column 2:", COLS_GRAPH, index=COLS_GRAPH.index("BG"))
 
         show_graph(df, col_name1, col_name2)
 
