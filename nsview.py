@@ -208,7 +208,7 @@ def main():
             # Convert dates to string in UTC
             min_date = min_date.replace(tzinfo=pytz.utc)
             max_date = max_date.replace(tzinfo=pytz.utc)
-            st.write(max_date)
+            # st.write(max_date)
 
             if submit_button:
                 # Dont use cache, if clicked on the button
