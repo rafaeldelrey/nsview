@@ -97,12 +97,15 @@ def get_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
     df = pd.read_json(fp_status)
     if len(df) == 0:
         return None
+
+    df = pd.concat([df, pd.json_normalize(df.pump)], axis=1)
+    df = pd.concat([df, pd.json_normalize(df.openaps)], axis=1)
+
     if time_zone == TZ_DONT_CONVERT:
         df["date"] = df["created_at"]
     else:
         df["date"] = df["created_at"].dt.tz_convert(tz=time_zone)
     df["reason"] = df["openaps"].apply(get_suggested, item_name="reason")
-    # df["BG"] = df["openaps"].apply(get_suggested, item_name="BG")
     df = df.sort_values("created_at", ascending=False)
 
     for col in COLS_SUGGESTED_NUM:
@@ -229,8 +232,9 @@ def main():
         st.subheader(title)
         # Graph options
         col1, col2, _, _ = st.columns(4)
-        col_name1 = col1.selectbox("Graph Column 1:", COLS_GRAPH, index=COLS_GRAPH.index("ISF"))
-        col_name2 = col2.selectbox("Graph Column 2:", COLS_GRAPH, index=COLS_GRAPH.index("BG"))
+        cols_graph = COLS_GRAPH + list(df.columns)
+        col_name1 = col1.selectbox("Graph Column 1:", cols_graph, index=cols_graph.index("ISF"))
+        col_name2 = col2.selectbox("Graph Column 2:", cols_graph, index=cols_graph.index("BG"))
 
         show_graph(df, col_name1, col_name2)
 
