@@ -5,10 +5,12 @@ import logging
 import os
 import random
 import string
+from io import StringIO
 from urllib.parse import urlparse
 
 import arrow
 import requests
+import pandas as pd
 
 MAX_RETRIES = 4
 
@@ -324,4 +326,36 @@ def ns_data_file(data_type, tempdir, ns_url, token,
     if after_date:
         metadata['start_date'] = arrow.get(after_date).format('YYYY-MM-DD')
 
-    return (filepath, metadata)
+    return filepath, metadata
+
+
+def ns_data(data_type, ns_url, token, before_date, after_date):
+    """
+    Retrieve dataframe from a Nightscout URL, before and after dates.
+    """
+    assert data_type in ['treatments', 'profile', 'entries', 'devicestatus']
+
+    logger.debug('Initializing {}.json.gz file...'.format(data_type))
+    file_obj = StringIO()
+
+    logger.info('Retrieving NS {}'.format(data_type))
+
+    # A single query works for sparse data.
+    if data_type == 'profile':
+        ns_data_url = ns_url + '/api/v1/profile.json'
+        ns_params = {'count': 1000000}
+        ns_params['token'] = token
+        data_req = requests.get(ns_data_url, params=ns_params)
+        if data_req.json():
+            json.dump(data_req.json(), file_obj)
+    elif data_type == 'treatments':
+        get_ns_treatments(ns_url, token, file_obj, before_date, after_date)
+    elif data_type == 'entries':
+        get_ns_entries(ns_url, token, file_obj, before_date, after_date)
+    elif data_type == 'devicestatus':
+        get_ns_devicestatus(ns_url, token, file_obj, before_date, after_date)
+
+    file_obj.seek(0)
+    df = pd.read_json(file_obj)
+    file_obj.close()
+    return df

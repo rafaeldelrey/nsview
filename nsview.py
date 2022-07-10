@@ -9,21 +9,8 @@ import extra_streamlit_components as stx
 from st_aggrid import AgGrid
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-from nsdata import ns_data_file
-
-
-COLS_SUGGESTED_NUM = [
-    "BG",
-    "COB",
-    "IOB",
-    "eventualBG",
-    "targetBG",
-    "insulinReq",
-    "sensitivityRatio",
-    "variable_sens",
-]
+from nsdata import ns_data_file, ns_data
 
 COLS_REASON_NUM = ["ISF",
                    "CR",
@@ -42,12 +29,9 @@ COLS_REASON_NUM = ["ISF",
                    "bgDegree"
                    ]
 
-COLS_GRAPH = COLS_REASON_NUM + COLS_SUGGESTED_NUM
-
 COOKIE_NS_URL = "ns_url"
 COOKIE_NS_TOKEN = "ns_token"
 COOKIE_TIMEZONE = "timezone"
-
 
 TZ_DONT_CONVERT = "Dont convert"
 
@@ -62,25 +46,8 @@ st.set_page_config(layout="wide", page_title=title)
 cookie_manager = get_manager()
 
 
-def get_openaps(openaps, item_name):
-    if openaps is None:
-        return None
-    item = openaps.get(item_name, None)
-    return item
-
-
-def get_suggested(openaps, item_name):
-    ret = None
-    sug = get_openaps(openaps, "suggested")
-    if sug:
-        ret = sug.get(item_name, None)
-        if ret is None:
-            ret = sug.get(item_name.lower(), None)
-    return ret
-
-
 def get_reason_item(reason, item_name):
-    if reason is None:
+    if pd.isna(reason):
         return None
     rs = re.findall(f"{item_name}[\s]{{0,1}}: ([\d.\s-]*),", reason, flags=re.I)
     if len(rs) > 0:
@@ -89,32 +56,36 @@ def get_reason_item(reason, item_name):
 
 
 def get_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
-    data_dir = "./temp"
-    os.makedirs(data_dir, exist_ok=True)
-    fp_status, meta_status = ns_data_file("devicestatus", data_dir, ns_url, ns_token, max_date, min_date)
-    if not os.path.exists(fp_status):
-        return None
-    df = pd.read_json(fp_status)
+    df = ns_data("devicestatus", ns_url, ns_token, max_date, min_date)
+    # data_dir = "./temp"
+    # os.makedirs(data_dir, exist_ok=True)
+    # fp_status, meta_status = ns_data_file("devicestatus", data_dir, ns_url, ns_token, max_date, min_date)
+    # if not os.path.exists(fp_status):
+    #     return None
+    # df = pd.read_json(fp_status)
     if len(df) == 0:
         return None
 
+    # Parse json columns (might need to handle errors and clean data)
     df = pd.concat([df, pd.json_normalize(df.pump)], axis=1)
     df = pd.concat([df, pd.json_normalize(df.openaps)], axis=1)
 
+    # Date column (used in x axis)
     if time_zone == TZ_DONT_CONVERT:
         df["date"] = df["created_at"]
     else:
         df["date"] = df["created_at"].dt.tz_convert(tz=time_zone)
-    df["reason"] = df["openaps"].apply(get_suggested, item_name="reason")
-    df = df.sort_values("created_at", ascending=False)
 
-    for col in COLS_SUGGESTED_NUM:
-        df[col] = df["openaps"].apply(get_suggested, item_name=col)
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
+    # Parse other columns
     for col in COLS_REASON_NUM:
-        df[col] = df["reason"].apply(get_reason_item, item_name=col)
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        col_name = "reason." + col
+        df[col_name] = df["suggested.reason"].apply(get_reason_item, item_name=col)
+        df[col_name] = pd.to_numeric(df[col_name], errors="coerce")
+
+    # Calculated columns
+    df["CF"] = df["reason.ISF"].divide(df["reason.CR"])
+
+    df = df.sort_values("created_at", ascending=False)
     return df
 
 
@@ -129,30 +100,73 @@ def show_data(df):
     gb.configure_side_bar()
     grid_options = gb.build()
     AgGrid(df, gridOptions=grid_options, enable_enterprise_modules=True)
-    print(df[["created_at", "date"]].head())
 
 
-def show_graph(df, col_name1, col_name2):
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+def show_graph(df, col_name1, col_name2, col_name3):
+    fig = go.Figure()
     fig.update_layout(
         xaxis_title="Time",
-        # yaxis_title="ISF",
         margin=dict(l=20, r=20, t=60, b=20),
         height=500,
         paper_bgcolor="LightSteelBlue",
+        showlegend=False,
     )
     # Define x an ys
     x = df["date"]
     y1 = df[col_name1]
     y2 = df[col_name2]
+    if col_name3 != "":
+        y3 = df[col_name3]
 
-    # Add traces
-    fig.add_trace(go.Scatter(x=x, y=y1, name=col_name1), secondary_y=False)
-    fig.add_trace(go.Scatter(x=x, y=y2, name=col_name2), secondary_y=True)
+    COLOR_COL1 = "red"
+    COLOR_COL2 = "blue"
+    COLOR_COL3 = "green"
 
-    # Update axes
-    fig.update_yaxes(title_text=col_name1, secondary_y=False)
-    fig.update_yaxes(title_text=col_name2, secondary_y=True)
+    fig.add_trace(go.Scatter(x=x, y=y1, line=dict(color=COLOR_COL1)))
+    fig.add_trace(go.Scatter(x=x, y=y2, yaxis="y2", line=dict(color=COLOR_COL2)))
+    if col_name3 != "":
+        fig.add_trace(go.Scatter(x=x, y=y3, yaxis="y3", line=dict(color=COLOR_COL3)))
+
+    fig.update_layout(
+        yaxis=dict(
+            title=col_name1,
+            titlefont=dict(
+                color=COLOR_COL1
+            ),
+            tickfont=dict(
+                color=COLOR_COL1
+            )
+        ),
+        yaxis2=dict(
+            title=col_name2,
+            titlefont=dict(
+                color=COLOR_COL2
+            ),
+            tickfont=dict(
+                color=COLOR_COL2
+            ),
+            anchor="x",
+            overlaying="y",
+            side="right"
+        ),
+    )
+    if col_name3 != "":
+        fig.update_layout(dict(
+            xaxis=dict(
+                domain=[0.09, 1.0]
+            ),
+            yaxis3=dict(
+                title=col_name3,
+                titlefont=dict(
+                    color=COLOR_COL3
+                ),
+                tickfont=dict(
+                    color=COLOR_COL3
+                ),
+                anchor="free",
+                overlaying="y",
+                side="left",
+            )))
 
     # Plot graph
     st.plotly_chart(fig, use_container_width=True)
@@ -231,12 +245,15 @@ def main():
         # Show graph
         st.subheader(title)
         # Graph options
-        col1, col2, _, _ = st.columns(4)
-        cols_graph = COLS_GRAPH + list(df.columns)
-        col_name1 = col1.selectbox("Graph Column 1:", cols_graph, index=cols_graph.index("ISF"))
-        col_name2 = col2.selectbox("Graph Column 2:", cols_graph, index=cols_graph.index("BG"))
+        col1, col2, col3, _ = st.columns(4)
+        cols_graph_first = ["suggested.bg", "reason.ISF", "reason.CR", "CF"]
+        cols_graph = cols_graph_first + sorted(set(df.columns) - set(cols_graph_first))
 
-        show_graph(df, col_name1, col_name2)
+        col_name1 = col1.selectbox("Graph Column 1:", cols_graph, index=cols_graph.index("suggested.bg"))
+        col_name2 = col2.selectbox("Graph Column 2:", cols_graph, index=cols_graph.index("reason.ISF"))
+        col_name3 = col3.selectbox("Graph Column 3:", [""] + cols_graph, index=cols_graph.index("reason.CR") + 1)
+
+        show_graph(df, col_name1, col_name2, col_name3)
 
         # Show data
         st.subheader("Data:")
