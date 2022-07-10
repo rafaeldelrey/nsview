@@ -10,7 +10,9 @@ from st_aggrid import AgGrid
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 import plotly.graph_objects as go
 
-from nsdata import ns_data_file, ns_data
+from nsdata import ns_data
+from utils import get_list_index
+
 
 COLS_REASON_NUM = ["ISF",
                    "CR",
@@ -35,6 +37,10 @@ COOKIE_TIMEZONE = "timezone"
 
 TZ_DONT_CONVERT = "Dont convert"
 
+COLOR_COL1 = "red"
+COLOR_COL2 = "blue"
+COLOR_COL3 = "green"
+
 
 # @st.experimental_memo(show_spinner=False)
 def get_manager():
@@ -57,12 +63,6 @@ def get_reason_item(reason, item_name):
 
 def get_ns_data(ns_url, ns_token, min_date, max_date, time_zone):
     df = ns_data("devicestatus", ns_url, ns_token, max_date, min_date)
-    # data_dir = "./temp"
-    # os.makedirs(data_dir, exist_ok=True)
-    # fp_status, meta_status = ns_data_file("devicestatus", data_dir, ns_url, ns_token, max_date, min_date)
-    # if not os.path.exists(fp_status):
-    #     return None
-    # df = pd.read_json(fp_status)
     if len(df) == 0:
         return None
 
@@ -115,12 +115,7 @@ def show_graph(df, col_name1, col_name2, col_name3):
     x = df["date"]
     y1 = df[col_name1]
     y2 = df[col_name2]
-    if col_name3 != "":
-        y3 = df[col_name3]
-
-    COLOR_COL1 = "red"
-    COLOR_COL2 = "blue"
-    COLOR_COL3 = "green"
+    y3 = df[col_name3]  if col_name3 != "" else None
 
     fig.add_trace(go.Scatter(x=x, y=y1, line=dict(color=COLOR_COL1)))
     fig.add_trace(go.Scatter(x=x, y=y2, yaxis="y2", line=dict(color=COLOR_COL2)))
@@ -242,17 +237,21 @@ def main():
         cookie_manager.set(COOKIE_NS_TOKEN, ns_token, key=COOKIE_NS_TOKEN + "_set")
         cookie_manager.set(COOKIE_TIMEZONE, timezone_name, key=COOKIE_TIMEZONE + "_set")
 
-        # Show graph
         st.subheader(title)
-        # Graph options
-        col1, col2, col3, _ = st.columns(4)
-        cols_graph_first = ["suggested.bg", "reason.ISF", "reason.CR", "CF"]
+
+        # Define columns to plot
+        col1, col2, col3 = st.columns(3)
+        cols_graph_first = ["suggested.bg", "reason.ISF", "reason.CR", "CF"]       # Show these first
+        cols_graph_first = [col for col in cols_graph_first if col in df.columns]  # if they exist in the data
         cols_graph = cols_graph_first + sorted(set(df.columns) - set(cols_graph_first))
+        index1 = get_list_index(cols_graph, "suggested.bg", 0)
+        index2 = get_list_index(cols_graph, "reason.ISF", 1)
 
-        col_name1 = col1.selectbox("Graph Column 1:", cols_graph, index=cols_graph.index("suggested.bg"))
-        col_name2 = col2.selectbox("Graph Column 2:", cols_graph, index=cols_graph.index("reason.ISF"))
-        col_name3 = col3.selectbox("Graph Column 3:", [""] + cols_graph, index=cols_graph.index("reason.CR") + 1)
+        col_name1 = col1.selectbox("Graph Column 1:", cols_graph, index=index1)
+        col_name2 = col2.selectbox("Graph Column 2:", cols_graph, index=index2)
+        col_name3 = col3.selectbox("Graph Column 3:", [""] + cols_graph, index=0)
 
+        # Show graph with the selected columns
         show_graph(df, col_name1, col_name2, col_name3)
 
         # Show data
